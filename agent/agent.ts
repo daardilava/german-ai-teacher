@@ -1,221 +1,221 @@
-import { Agent, AgentSession, ServerOptions, cli, defineAgent, inference, llm } from '@livekit/agents';
+import { Agent, AgentSession, ServerOptions, cli, defineAgent, inference, llm, log } from '@livekit/agents';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
-// Datos del restaurante.
-// Horario y dirección: ficha de TripAdvisor de Mirador Guane (Zapatoca).
-// Capacidad, última hora de reserva y tamaño máximo de grupo son supuestos
-// de prueba: cámbialos por los datos reales del restaurante.
+// Scenarios. Lena plays the other person, and the learner plays themselves.
+// change_scenario returns one of these entries to the model.
 // ---------------------------------------------------------------------------
-const RESTAURANTE = {
-  nombre: 'Mirador Guane',
-  direccion: 'Vereda Cuchilla de San Pablo, Finca El Limoncito, Zapatoca, Santander, Colombia',
-  zonaHoraria: 'America/Bogota',
-  diaCerrado: 2, // 0 = domingo, 1 = lunes, 2 = martes...
-  apertura: '08:00',
-  cierre: '20:00',
-  ultimaReserva: '19:00', // supuesto: una hora antes del cierre
-  capacidadPorHora: 40, // supuesto: personas por franja de una hora
-  maxPersonasPorReserva: 15, // supuesto: grupos mayores necesitan atención especial
+const SCENARIO_IDS = [
+  'bakery',
+  'doctor',
+  'registration_office',
+  'supermarket',
+  'first_day_at_work',
+  'landlord_call',
+  'free_conversation',
+] as const;
+
+type ScenarioId = (typeof SCENARIO_IDS)[number];
+
+type Scenario = {
+  title: string;
+  lenaPlays: string;
+  setting: string;
+  learnerGoal: string;
+  usefulPhrases: string[];
 };
 
-const ARCHIVO_RESERVAS = fileURLToPath(new URL('./reservas.json', import.meta.url));
-const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-
-type Reserva = {
-  codigo: string;
-  nombre: string;
-  telefono: string;
-  fecha: string; // AAAA-MM-DD
-  hora: string; // HH:MM
-  personas: number;
-  notas: string;
-  creada: string;
+const SCENARIOS: Record<ScenarioId, Scenario> = {
+  bakery: {
+    title: 'Beim Bäcker',
+    lenaPlays: 'the friendly salesperson in a bakery in Frankfurt',
+    setting: 'Saturday morning. The learner wants to buy bread rolls and something sweet.',
+    learnerGoal: 'Order a few items, ask for a price, and pay by card or in cash.',
+    usefulPhrases: ['Ich hätte gern zwei Brötchen.', 'Was kostet das?', 'Kann ich mit Karte zahlen?'],
+  },
+  doctor: {
+    title: 'Beim Arzt',
+    lenaPlays: "the receptionist at a family doctor's practice (Hausarztpraxis), and then the doctor",
+    setting: 'The learner feels sick and comes to the practice without an appointment.',
+    learnerGoal: 'Ask to see the doctor, show the health insurance card, and describe the symptoms.',
+    usefulPhrases: ['Ich habe keinen Termin.', 'Ich habe seit zwei Tagen Kopfschmerzen.', 'Hier ist meine Versichertenkarte.'],
+  },
+  registration_office: {
+    title: 'Im Bürgeramt: die Anmeldung',
+    lenaPlays: 'a clerk at the Bürgeramt in Frankfurt',
+    setting: 'The learner has moved into a new flat and has an appointment to register the address.',
+    learnerGoal:
+      'Give the name, date of birth and new address, spell the name, and hand over the passport ' +
+      'and the Wohnungsgeberbestätigung.',
+    usefulPhrases: ['Ich möchte mich anmelden.', 'Ich buchstabiere meinen Namen.', 'Hier ist mein Pass.'],
+  },
+  supermarket: {
+    title: 'Im Supermarkt',
+    lenaPlays: 'a supermarket employee, and later the cashier',
+    setting: 'The learner cannot find a product, and then pays at the checkout.',
+    learnerGoal: "Ask where a product is, understand the answer, and answer the cashier's questions.",
+    usefulPhrases: ['Entschuldigung, wo finde ich die Milch?', 'Nein danke, ich brauche keine Tüte.', 'Den Kassenbon, bitte.'],
+  },
+  first_day_at_work: {
+    title: 'Der erste Arbeitstag',
+    lenaPlays: 'a friendly colleague who shows the learner around. Colleagues use du.',
+    setting: "The learner's first morning in a new job.",
+    learnerGoal: 'Introduce yourself, say what your job is, and ask about the workplace and the breaks.',
+    usefulPhrases: ['Hallo, ich bin neu hier.', 'Wann ist die Mittagspause?', 'Wo ist die Kaffeemaschine?'],
+  },
+  landlord_call: {
+    title: 'Anruf beim Vermieter',
+    lenaPlays: 'the landlady, Frau Becker, who answers the phone',
+    setting: "The heating in the learner's flat is broken, and the learner calls the landlady.",
+    learnerGoal: 'Say who is calling, describe the problem, and agree on a day and time for the repair.',
+    usefulPhrases: ['Guten Tag, hier ist ... aus der Wohnung im zweiten Stock.', 'Die Heizung ist kaputt.', 'Wann kann der Handwerker kommen?'],
+  },
+  free_conversation: {
+    title: 'Freies Gespräch',
+    lenaPlays: 'herself, Lena, a teacher from Frankfurt',
+    setting: "A relaxed chat about everyday life: the learner's day, work, hobbies, food or life in Germany.",
+    learnerGoal: 'Talk freely and keep the conversation going.',
+    usefulPhrases: ['Ich wohne seit ... in Deutschland.', 'Am Wochenende ...', 'Und du?'],
+  },
 };
 
-async function leerReservas(): Promise<Reserva[]> {
+// ---------------------------------------------------------------------------
+// Mistakes. A local file for development. Each entry gets a timestamp.
+// ---------------------------------------------------------------------------
+const MISTAKE_TYPES = ['grammar', 'vocabulary', 'word_order', 'pronunciation', 'article'] as const;
+
+type Mistake = {
+  timestamp: string;
+  type: (typeof MISTAKE_TYPES)[number];
+  original: string;
+  correction: string;
+};
+
+const MISTAKES_FILE = fileURLToPath(new URL('./mistakes.json', import.meta.url));
+
+async function readMistakes(): Promise<Mistake[]> {
   try {
-    return JSON.parse(await readFile(ARCHIVO_RESERVAS, 'utf8')) as Reserva[];
-  } catch {
-    return [];
+    return JSON.parse(await readFile(MISTAKES_FILE, 'utf8')) as Mistake[];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error; // A damaged file is not overwritten.
   }
 }
 
-/** Fecha (AAAA-MM-DD) y hora (HH:MM) actuales en Colombia. */
-function ahoraEnColombia() {
-  const partes = Object.fromEntries(
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone: RESTAURANTE.zonaHoraria,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    })
-      .formatToParts(new Date())
-      .map((p) => [p.type, p.value]),
-  );
-  return { fecha: `${partes.year}-${partes.month}-${partes.day}`, hora: `${partes.hour}:${partes.minute}` };
+// Runs the writes one after another, so two calls in one turn do not overwrite each other.
+let lastWrite: Promise<void> = Promise.resolve();
+
+function appendMistake(mistake: Mistake) {
+  const write = lastWrite.then(async () => {
+    const mistakes = await readMistakes();
+    mistakes.push(mistake);
+    await writeFile(MISTAKES_FILE, JSON.stringify(mistakes, null, 2));
+  });
+  lastWrite = write.catch(() => {});
+  return write;
 }
 
-function diaDeLaSemana(fecha: string) {
-  return new Date(`${fecha}T12:00:00Z`).getUTCDay();
-}
-
-/** Devuelve un motivo en texto si la reserva no es posible, o null si sí lo es. */
-async function comprobarDisponibilidad(fecha: string, hora: string, personas: number) {
-  if (Number.isNaN(Date.parse(`${fecha}T00:00:00Z`))) return 'La fecha no es válida.';
-  const ahora = ahoraEnColombia();
-  if (fecha < ahora.fecha || (fecha === ahora.fecha && hora <= ahora.hora)) {
-    return 'Esa fecha y hora ya pasaron.';
-  }
-  if (diaDeLaSemana(fecha) === RESTAURANTE.diaCerrado) {
-    return `El restaurante cierra los ${DIAS[RESTAURANTE.diaCerrado]}.`;
-  }
-  if (hora < RESTAURANTE.apertura || hora > RESTAURANTE.ultimaReserva) {
-    return `Solo se reserva entre las ${RESTAURANTE.apertura} y las ${RESTAURANTE.ultimaReserva}.`;
-  }
-  if (personas > RESTAURANTE.maxPersonasPorReserva) {
-    return `Para grupos de más de ${RESTAURANTE.maxPersonasPorReserva} personas se necesita atención especial del restaurante.`;
-  }
-  const franja = hora.slice(0, 2);
-  const ocupadas = (await leerReservas())
-    .filter((r) => r.fecha === fecha && r.hora.slice(0, 2) === franja)
-    .reduce((total, r) => total + r.personas, 0);
-  if (ocupadas + personas > RESTAURANTE.capacidadPorHora) {
-    return 'No queda cupo en esa franja horaria. Ofrece otra hora cercana.';
-  }
-  return null;
-}
-
-const fechaHora = {
-  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('Fecha de la reserva en formato AAAA-MM-DD'),
-  hora: z.string().regex(/^\d{2}:\d{2}$/).describe('Hora de llegada en formato HH:MM de 24 horas'),
-  personas: z.number().int().min(1).describe('Número de personas'),
-};
-
-const herramientas = {
-  verificar_disponibilidad: llm.tool({
+const tools = [
+  llm.tool({
+    name: 'log_mistake',
     description:
-      'Comprueba si hay cupo para una fecha, hora y número de personas. Úsala antes de pedir los datos personales.',
-    parameters: z.object(fechaHora),
-    execute: async ({ fecha, hora, personas }) => {
-      const motivo = await comprobarDisponibilidad(fecha, hora, personas);
-      return motivo ? { disponible: false, motivo } : { disponible: true, dia: DIAS[diaDeLaSemana(fecha)] };
+      'Saves a real mistake the learner made, for later practice. Call it silently, at the end of ' +
+      'your turn, after your spoken reply. Do not use it for hesitations, filler words or ' +
+      'self-corrections. It returns nothing.',
+    parameters: z.object({
+      original: z.string().min(1).describe('What the learner said, word for word'),
+      correction: z.string().min(1).describe('The same sentence in correct German'),
+      type: z.enum(MISTAKE_TYPES).describe('The kind of mistake'),
+    }),
+    execute: async ({ original, correction, type }) => {
+      try {
+        await appendMistake({ timestamp: new Date().toISOString(), type, original, correction });
+      } catch (error) {
+        // The lesson continues. The learner does not need to hear about a failed write.
+        log().error({ error }, 'could not save the mistake');
+      }
+      // No return value, so the session does not ask the model for another reply.
     },
   }),
 
-  crear_reserva: llm.tool({
+  llm.tool({
+    name: 'change_scenario',
     description:
-      'Registra la reserva. Úsala solo después de verificar la disponibilidad, tener todos los datos ' +
-      'y que el cliente haya confirmado el resumen en voz alta.',
+      'Starts or switches the role-play. Use it when the learner picks a situation or asks for ' +
+      'another one. Returns the role you play, the setting and the learner goal.',
     parameters: z.object({
-      ...fechaHora,
-      nombre: z.string().min(2).describe('Nombre de la persona que reserva'),
-      telefono: z.string().min(7).describe('Teléfono de contacto, solo dígitos y prefijo'),
-      notas: z.string().describe('Peticiones especiales, alergias u ocasión. Cadena vacía si no hay.'),
+      scenario: z.enum(SCENARIO_IDS).describe('The scenario to start'),
     }),
-    execute: async ({ fecha, hora, personas, nombre, telefono, notas }) => {
-      const motivo = await comprobarDisponibilidad(fecha, hora, personas);
-      if (motivo) return { reservada: false, motivo };
-
-      const reservas = await leerReservas();
-      const codigo = `MG-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-      reservas.push({ codigo, nombre, telefono, fecha, hora, personas, notas, creada: new Date().toISOString() });
-      await writeFile(ARCHIVO_RESERVAS, JSON.stringify(reservas, null, 2));
-      return { reservada: true, codigo };
-    },
+    execute: async ({ scenario }) => ({ scenario, ...SCENARIOS[scenario] }),
   }),
+];
 
-  cancelar_reserva: llm.tool({
-    description: 'Cancela una reserva existente con su código y el teléfono con el que se hizo.',
-    parameters: z.object({
-      codigo: z.string().describe('Código de la reserva, por ejemplo MG-AB12'),
-      telefono: z.string().describe('Teléfono con el que se hizo la reserva'),
-    }),
-    execute: async ({ codigo, telefono }) => {
-      const soloDigitos = (t: string) => t.replace(/\D/g, '');
-      const reservas = await leerReservas();
-      const indice = reservas.findIndex(
-        (r) => r.codigo.toUpperCase() === codigo.toUpperCase().replace(/\s/g, '') &&
-          soloDigitos(r.telefono).endsWith(soloDigitos(telefono).slice(-7)),
-      );
-      if (indice === -1) return { cancelada: false, motivo: 'No hay ninguna reserva con ese código y teléfono.' };
-      const [cancelada] = reservas.splice(indice, 1);
-      await writeFile(ARCHIVO_RESERVAS, JSON.stringify(reservas, null, 2));
-      return { cancelada: true, fecha: cancelada.fecha, hora: cancelada.hora };
-    },
-  }),
-};
-
-function instrucciones() {
-  const ahora = ahoraEnColombia();
-  const r = RESTAURANTE;
+function instructions() {
+  const scenarioList = SCENARIO_IDS.map((id) => `- ${id}: ${SCENARIOS[id].title}`).join('\n');
   return `
-# Rol y objetivo
-Eres Valentina, la asistente de reservas por voz del restaurante ${r.nombre}, un mirador con restaurante en Zapatoca, Santander.
-Tu objetivo es tomar, confirmar y cancelar reservas de mesa de forma rápida y amable.
-Hoy es ${DIAS[diaDeLaSemana(ahora.fecha)]} ${ahora.fecha} y son las ${ahora.hora} en Colombia. Usa esto para entender "hoy", "mañana" o "el sábado".
+# Role
+You are Lena, a German teacher from Frankfurt who teaches by voice.
+Your learners speak Spanish or English and live in Germany.
+Your goal is to help them speak German in the real situations of their daily life, through short conversations and role-plays.
 
-# Datos del restaurante
-- Dirección: ${r.direccion}.
-- Horario: de ${r.apertura} a ${r.cierre}, todos los días excepto los ${DIAS[r.diaCerrado]}, que está cerrado.
-- Se reserva entre las ${r.apertura} y las ${r.ultimaReserva}.
-- Lo más destacado es la vista panorámica, desde donde se ven los pueblos cercanos.
-- No tienes la carta, los precios ni el teléfono del restaurante. Si te preguntan, dilo con naturalidad y no inventes nada.
+# Personality
+- Warm, patient and encouraging. Mistakes are normal, and you never make the learner feel bad.
+- Light humor: a small, friendly joke now and then, never about the learner.
+- Sound natural, never robotic. Vary your phrases and your praise.
 
-# Personalidad y tono
-- Cálida, cercana y eficiente, con el trato amable de Santander. Trata al cliente de "usted".
-- Suena natural y tranquila, nunca robótica. Varía tus frases.
+# Learner level
+- Learners are between A1 and B1. Start at A1 and adapt to how the learner answers.
+- At A1, use very short sentences, speak slowly and clearly, and use common everyday words. Ask one question at a time.
+- If the learner answers easily and in longer sentences, move toward A2 or B1: longer sentences, the Perfekt, and less common words. If the learner struggles, go back to simpler German.
 
-# Idioma
-- Habla en español de Colombia. Si el cliente habla otro idioma, responde en ese idioma.
+# Language
+- Speak German.
+- If the learner is stuck, does not understand twice, or asks for help, give one short sentence of help in their language: Spanish if they speak Spanish, English if they speak English. For example, translate the word they need. Then go back to German in the same turn.
+- As the teacher, use du with the learner. In a role-play, talk like the real person would: Sie with staff, officials and strangers, du with colleagues and friends.
 
-# Razonamiento
-- Antes de responder, piensa qué dato te falta para completar la reserva. Pide solo ese dato.
-- Guarda tu razonamiento para ti y di solo la respuesta.
+# Corrections
+- Correct by recasting: repeat the learner's sentence correctly, in a natural way, and continue the conversation. For example, the learner says "Ich möchte der Kaffee." You say "Ah, du möchtest einen Kaffee. Mit Milch?"
+- In a role-play, stay in your role while you recast.
+- Explain a grammar rule only when the learner makes the same mistake a second time. Then say the rule in one short sentence, in simple German or, at A1, in the learner's language, and continue.
+- Never interrupt the flow with long explanations or lists of mistakes.
 
-# Canales de mensaje
-- Todo lo que dices se convierte en voz y aparece como transcripción en la pantalla.
-- Nunca uses markdown, listas, emojis ni símbolos. Di las horas como se hablan, por ejemplo "a la una de la tarde".
+# Scenarios
+You practice with role-plays. You play the other person, and the learner plays themselves. These are the scenarios:
+${scenarioList}
+- When the learner picks a scenario or wants to switch, call change_scenario, then play the role it returns. Open the scene yourself with a short line in your role.
+- Keep each scene realistic for Germany, and make it a little harder as the learner gets more confident.
+- When the learner reaches the goal of the scene, step out of the role, praise them briefly, and offer another scenario or a harder version.
+- If the learner wants a situation that is not on the list, use free_conversation and play the role they describe.
 
-# Preámbulos
-- Antes de usar una herramienta, di una frase muy corta como "Déjeme revisar" o "Un momento, se la confirmo".
+# Output rules
+- Everything you say becomes speech and is shown as a transcript on the screen.
+- Plain spoken text only. Never use markdown, lists, emojis or symbols.
+- Say numbers, prices and times the way people speak them, for example "zwei Euro fünfzig" or "um halb neun".
 
-# Verbosidad
-- Respuestas de una o dos frases. Una pregunta a la vez.
+# Verbosity
+- One or two short sentences per turn.
+- Ask one question at a time, then let the learner speak.
 
-# Herramientas
-- Proceso de reserva, en este orden:
-  1. Pregunta la fecha, la hora y el número de personas.
-  2. Usa verificar_disponibilidad. Si no hay cupo, explica el motivo y ofrece una alternativa cercana.
-  3. Pide el nombre y un teléfono de contacto, y pregunta si hay alguna petición especial, alergia u ocasión.
-  4. Resume en voz alta fecha, hora, personas, nombre y teléfono, y pide confirmación.
-  5. Solo cuando el cliente confirme, usa crear_reserva y dile el código de reserva letra por letra.
-- Para cancelar, pide el código y el teléfono y usa cancelar_reserva.
-- Nunca digas que una reserva está hecha si crear_reserva no devolvió reservada: true.
-- No puedes enviar mensajes, correos ni WhatsApp. No lo prometas.
+# Tools
+- change_scenario: before you call it, say a very short phrase like "Super, los geht's!"
+- log_mistake: use it for real mistakes in what the learner said: grammar, vocabulary, word order, articles, or a pronunciation that makes a word hard to understand. Do not use it for hesitations, filler words, self-corrections or names.
+- Call log_mistake silently. Never mention it, and never say that you are taking notes.
+- Always say your reply first, with the recast, and call log_mistake at the end of the same turn. It returns nothing, and you do not speak again after it.
+- If a sentence has several mistakes, log only the one or two most important ones.
 
-# Audio poco claro
-- Si no entiendes bien, no adivines. Pide con amabilidad que lo repita: "Disculpe, no le escuché bien, ¿me lo repite?"
+# Unclear audio
+- If you did not understand the learner, do not guess. Ask in simple German, for example "Entschuldigung, das habe ich nicht verstanden. Noch einmal, bitte?"
+- If you still do not understand, make it easier: offer two answers to choose from, or ask in the learner's language.
+- Never log unclear audio as a pronunciation mistake. Use pronunciation only when you clearly understood which word the learner meant.
 
-# Captura de datos
-- Repite el teléfono dígito a dígito para confirmarlo, agrupado de tres en tres.
-- Si un nombre es poco común, pide que lo deletree.
-- Convierte fechas relativas a fechas concretas y confírmalas: "¿El sábado veintinueve de noviembre, correcto?"
-
-# Conversaciones largas
-- Si el cliente cambia un dato, vuelve a verificar la disponibilidad antes de reservar.
-- Al final, despídete con la fecha y hora de la reserva y una frase amable.
-
-# Escalamiento
-- Para grupos grandes, eventos privados, quejas o cualquier cosa que no puedas resolver,
-  di que esa solicitud debe gestionarla directamente el personal del restaurante.
-- Si el cliente insiste en hablar con una persona, díselo con amabilidad y no inventes un número de contacto.
+# Long conversations
+- Remember the learner's mistakes during the conversation. When a mistake comes back, that is the moment to explain the rule.
+- Change the activity before it gets boring: after a scene ends, offer a new one or a harder version.
+- If the learner seems tired or frustrated, slow down, make it easier and encourage them.
+- When the learner wants to stop, say goodbye in simple German and name one thing they did well today.
 `;
 }
 
@@ -234,15 +234,16 @@ export default defineAgent({
       // Removes background voices and noise, so nearby talk does not reach the model as a user turn.
       inputOptions: { noiseCancellation: BackgroundVoiceCancellation() },
       agent: new Agent({
-        instructions: instrucciones(),
-        tools: herramientas,
+        instructions: instructions(),
+        tools,
       }),
     });
 
     session.generateReply({
       instructions:
-        'Saluda según la hora del día, preséntate como Valentina de Mirador Guane ' +
-        'y pregunta en qué le puedes ayudar con su reserva.',
+        'Greet the learner in simple A1 German and introduce yourself as Lena, their German teacher. ' +
+        'Ask which situation they want to practice today, and offer three of the scenarios as examples. ' +
+        'Use at most three short sentences.',
     });
   },
 });

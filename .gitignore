@@ -28,3 +28,6 @@ logs/
 
 # Reservations made by the voice agent (names and phone numbers).
 /agent/reservas.json
+
+# Mistakes logged by the teacher agent during lessons.
+/agent/mistakes.json
