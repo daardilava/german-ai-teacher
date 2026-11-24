@@ -1,27 +1,31 @@
 <div align="center">
-  <img src="assets/icon.png" alt="" width="88" height="88">
-  <h1>Expo LiveKit</h1>
-  <p>
-    A minimal voice agent starter for <a href="https://expo.dev">Expo</a> and <a href="https://livekit.io">LiveKit</a>.<br>
-    Talk to an AI agent, watch its voice, and read the transcript as it streams.
-  </p>
+  <h1>German AI Teacher</h1>
+  <p>A voice-first AI German teacher for people living in Germany.</p>
   <p>
     <img src="https://img.shields.io/badge/Expo_SDK-58-000?logo=expo&logoColor=fff" alt="Expo SDK 58">
     <img src="https://img.shields.io/badge/LiveKit-Agents-000?logo=livekit&logoColor=fff" alt="LiveKit Agents">
     <img src="https://img.shields.io/badge/license-MIT-000" alt="MIT license">
   </p>
-
-https://github.com/user-attachments/assets/b5dcf4f1-5b9c-4337-8cb4-780e0f8d91de
-
 </div>
 
-## What you get
+## Why I'm building this
 
-- **One screen.** A live visualizer, a streaming transcript, and two controls: mute and end.
-- **One hook.** All LiveKit session code is in [`use-voice-session.ts`](src/hooks/use-voice-session.ts).
-- **One agent.** A [realtime voice agent](agent/agent.ts) in 36 lines.
-- **One set of keys.** The model runs on LiveKit Inference. You need no OpenAI key.
-- **No token server to run.** An [Expo Router API route](src/app/token+api.ts) issues LiveKit tokens.
+I'm a data center technician in Frankfurt, and my German is at A1.2. I'm building the teacher I need: one I can talk to, about the real situations of life in Germany.
+
+I'm building it in public on X and LinkedIn.
+
+## Demo
+
+<!-- TODO: add a demo GIF, for example assets/demo.gif -->
+
+_A demo GIF is coming soon._
+
+## Tech stack
+
+- [Expo SDK 58](https://docs.expo.dev/versions/v58.0.0/) for iOS and Android
+- [Expo Router](https://docs.expo.dev/router/introduction/), which also serves the LiveKit token endpoint as an API route
+- [LiveKit Agents](https://docs.livekit.io/agents/) in TypeScript for the voice agent
+- Realtime speech-to-speech through [LiveKit Inference](https://docs.livekit.io/agents/models/), so you need no separate OpenAI key
 
 ## Quick start
 
@@ -34,7 +38,9 @@ lk cloud auth
 lk app env -w
 ```
 
-`lk app env -w` writes your LiveKit credentials to `.env.local`. Then start the agent and the app in two terminals:
+`lk app env -w` writes your LiveKit credentials to `.env.local`. This file is ignored by Git. See `.env.example` for the variable names.
+
+Start the agent and the app in two terminals:
 
 ```sh
 npm run agent
@@ -44,77 +50,27 @@ npm run agent
 npm run ios
 ```
 
-For Android, use `npm run android`. The app needs a development build because Expo Go does not include WebRTC.
+For Android, use `npm run android`. The app needs a development build, because Expo Go does not include WebRTC.
 
-## Visualizers
+On a simulator or emulator, the agent can hear its own voice from your speakers. Mute the microphone while the agent speaks.
 
-The app shows all five audio visualizers from [LiveKit Agents UI](https://livekit.com/products/agents-ui). Change the style with the control at the top of the screen, also during a conversation.
+> **Current state:** `agent/agent.ts` is still a Spanish-speaking restaurant reservation agent from an earlier experiment. "Lena", the German teacher, replaces it next.
 
-<img src="assets/visualizers.png" alt="The Aura, Wave, Bar, Grid and Radial visualizers" width="100%">
+## Roadmap
 
-The visualizers are web components. They run in an [Expo DOM component](https://docs.expo.dev/guides/dom-components/), and the app measures the audio level natively. To keep one style, set it in [`src/app/index.tsx`](src/app/index.tsx) and delete the other files in [`src/components/agents-ui/`](src/components/agents-ui).
-
-## Project structure
-
-```
-src/
-  app/
-    _layout.tsx             Registers the LiveKit WebRTC globals
-    _layout.web.tsx         Web layout. The web build only serves the token route.
-    index.tsx               The screen
-    token+api.ts            Token endpoint. It runs on the server.
-  hooks/
-    use-voice-session.ts    Start, mute and end a conversation
-  components/
-    visualizer.tsx          Native audio levels for the visualizer
-    agents-ui/              LiveKit Agents UI visualizers
-    transcript.tsx          The live transcript
-    segmented.tsx           The style control
-    button.tsx              The mute, end and start buttons
-  theme.ts                  Colors
-agent/
-  agent.ts                  The voice agent
-```
-
-## Make it yours
-
-- Change the agent's instructions, voice and model in `agent/agent.ts`.
-- Change the app name, icon and bundle identifiers in `app.json`.
-- Change the colors in `src/theme.ts`.
-
-## Ship it
-
-In development, the app fetches tokens from the Expo dev server. A release build has no dev server, so deploy the token route and tell the app where it is.
-
-1. Deploy the API route to [EAS Hosting](https://docs.expo.dev/eas/hosting/get-started/). `eas deploy` uploads the variables in `.env.local` with the route.
-
-   ```sh
-   npx expo export --platform web
-   npx eas-cli deploy --prod
-   ```
-
-2. Set the deployed URL as the `origin` of the `expo-router` plugin in `app.json`, then build again:
-
-   ```json
-   ["expo-router", { "origin": "https://your-app.expo.app" }]
-   ```
-
-To test a release build on an iOS device before you deploy, set `origin` to the dev server's LAN address instead, for example `http://192.168.1.20:8081`. Android release builds block plain HTTP.
-
-The token route issues a token to anyone who calls it. Add authentication in `src/app/token+api.ts` before you ship.
-
-Deploy the agent in `agent/` to LiveKit Cloud with [`lk agent deploy`](https://docs.livekit.io/agents/ops/deployment/).
-
-To build the app and send it to TestFlight from your browser, use [Expo Launch](https://launch.expo.dev/). Launch builds the repository you give it. Give it your copy of this template, with `origin` set, so the app can reach your token route.
-
-[![Launch with Expo](https://github.com/expo/examples/blob/master/.gh-assets/launch.svg?raw=true)](https://launch.expo.dev/?github=https://github.com/expo/expo-livekit-template)
-
-## Good to know
-
-- **Echo on a simulator or emulator.** The agent can hear its own voice from your computer's speakers. Mute the microphone while the agent speaks.
-- **Hidden logs.** [`use-voice-session.ts`](src/hooks/use-voice-session.ts) hides two harmless LiveKit logs that occur when a conversation ends. One has a fix in [client-sdk-js#2192](https://github.com/livekit/client-sdk-js/pull/2192) that is not released yet. Delete its line after you update `livekit-client`.
-- **Transcript.** The transcript clears when a conversation ends.
+- [ ] Teacher agent: Lena, a patient German teacher for levels A1 to B1
+- [ ] Scenarios: real situations in Germany, for example the doctor, the Bürgeramt, the landlord and the supermarket
+- [ ] Mistake tracking: remember your mistakes and practice them again
+- [ ] Onboarding: native language (Spanish or English), level and goals
+- [ ] Supabase auth: accounts and a protected token endpoint
+- [ ] Spaced repetition: review words and phrases at the right time
+- [ ] Beta: TestFlight and Google Play internal testing
+- [ ] Subscriptions on iOS and Android
 
 ## Credits
 
-The visualizers come from [LiveKit Agents UI](src/components/agents-ui/README.md) (Apache 2.0). This template has the [MIT license](LICENSE).
+This project is built on [expo/expo-livekit-template](https://github.com/expo/expo-livekit-template) (MIT). The audio visualizers come from [LiveKit Agents UI](src/components/agents-ui/README.md) (Apache 2.0).
+
+## License
+
+[MIT](LICENSE)
