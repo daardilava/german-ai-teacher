@@ -25,3 +25,6 @@ logs/
 
 # Demo videos are large. The README video is a GitHub attachment.
 /assets/demo.mp4
+
+# Reservations made by the voice agent (names and phone numbers).
+/agent/reservas.json

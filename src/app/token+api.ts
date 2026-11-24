@@ -1,7 +1,7 @@
 import { AccessToken, RoomAgentDispatch, RoomConfiguration } from 'livekit-server-sdk';
 
 // Must match `agentName` in agent/agent.ts.
-const AGENT_NAME = 'expo-livekit-agent';
+const AGENT_NAME = 'german-ai-teacher-agent';
 
 /**
  * Issues a LiveKit token for a new room and dispatches the agent to that room.

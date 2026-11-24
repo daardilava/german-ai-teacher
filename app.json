@@ -1,24 +1,35 @@
 {
   "expo": {
-    "name": "LiveKit Voice",
-    "slug": "expo-livekit-template",
+    "name": "German AI Teacher",
+    "slug": "german-ai-teacher",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "scheme": "expolivekit",
+    "scheme": "germanaiteacher",
     "userInterfaceStyle": "dark",
     "ios": {
       "icon": "./assets/ExpoLiveKitIcon.icon",
-      "bundleIdentifier": "com.example.expolivekit",
+      "bundleIdentifier": "com.diegovargas.germanaiteacher",
       "supportsTablet": true,
       "infoPlist": {
         "UIBackgroundModes": [
           "audio"
         ]
-      }
+      },
+      "bitcode": false
     },
     "android": {
-      "package": "com.example.expolivekit"
+      "package": "com.diegovargas.germanaiteacher",
+      "permissions": [
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -26,7 +37,7 @@
       [
         "@config-plugins/react-native-webrtc",
         {
-          "microphonePermission": "Talk with your LiveKit voice assistant."
+          "microphonePermission": "Talk with your German AI teacher."
         }
       ],
       [
@@ -43,6 +54,14 @@
     "web": {
       "output": "server",
       "favicon": "./assets/icon.png"
-    }
+    },
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      }
+    },
+    "owner": "diegovargas"
   }
 }
